@@ -5,15 +5,24 @@ import { useState, useRef } from "react";
 interface PostFormProps {
   groupId?: string;
   groups?: { id: string; name: string }[];
+  hideGroupSelector?: boolean;
   onPost?: () => void;
 }
 
-export default function PostForm({ groupId, groups, onPost }: PostFormProps) {
+export default function PostForm({ groupId, groups, hideGroupSelector, onPost }: PostFormProps) {
   const [content, setContent] = useState("");
   const [selectedGroup, setSelectedGroup] = useState(groupId || "");
+
+  // Sync with external groupId prop (e.g. feed filter)
+  const prevGroupId = useRef(groupId);
+  if (groupId !== prevGroupId.current) {
+    prevGroupId.current = groupId;
+    setSelectedGroup(groupId || "");
+  }
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
   const [posting, setPosting] = useState(false);
+  const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   function handlePhoto(e: React.ChangeEvent<HTMLInputElement>) {
@@ -34,6 +43,19 @@ export default function PostForm({ groupId, groups, onPost }: PostFormProps) {
     setPreviews((prev) => prev.filter((_, j) => j !== index));
   }
 
+  async function ensureJpeg(file: File): Promise<File> {
+    if (file.type === "image/jpeg" || file.type === "image/png") return file;
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext("2d")!.drawImage(bitmap, 0, 0);
+    const blob = await new Promise<Blob>((resolve) =>
+      canvas.toBlob((b) => resolve(b!), "image/jpeg", 1.0)
+    );
+    return new File([blob], file.name.replace(/\.[^.]+$/, ".jpg"), { type: "image/jpeg" });
+  }
+
   async function uploadFile(file: File): Promise<string | null> {
     try {
       const presignRes = await fetch("/api/upload/presign", {
@@ -41,7 +63,11 @@ export default function PostForm({ groupId, groups, onPost }: PostFormProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filename: file.name, contentType: file.type }),
       });
-      if (!presignRes.ok) return null;
+      if (!presignRes.ok) {
+        const text = await presignRes.text();
+        setError(`Presign failed (${presignRes.status}): ${text}`);
+        return null;
+      }
       const { presignedUrl, publicUrl } = await presignRes.json();
 
       const uploadRes = await fetch(presignedUrl, {
@@ -49,8 +75,14 @@ export default function PostForm({ groupId, groups, onPost }: PostFormProps) {
         headers: { "Content-Type": file.type },
         body: file,
       });
-      return uploadRes.ok ? publicUrl : null;
-    } catch {
+      if (!uploadRes.ok) {
+        const text = await uploadRes.text();
+        setError(`S3 upload failed (${uploadRes.status}): ${text.slice(0, 200)}`);
+        return null;
+      }
+      return publicUrl;
+    } catch (err) {
+      setError(`Upload error: ${err}`);
       return null;
     }
   }
@@ -60,11 +92,13 @@ export default function PostForm({ groupId, groups, onPost }: PostFormProps) {
     if (!selectedGroup || (!content.trim() && photoFiles.length === 0)) return;
 
     setPosting(true);
+    setError("");
 
     // Upload photos now
     const photoUrls: string[] = [];
     for (const file of photoFiles) {
-      const url = await uploadFile(file);
+      const converted = await ensureJpeg(file);
+      const url = await uploadFile(converted);
       if (url) photoUrls.push(url);
     }
 
@@ -89,7 +123,10 @@ export default function PostForm({ groupId, groups, onPost }: PostFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="border-b border-zinc-800 p-4 space-y-3">
-      {!groupId && groups && (
+      {error && (
+        <div className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-400 break-all">{error}</div>
+      )}
+      {!hideGroupSelector && !groupId && groups && (
         <select
           value={selectedGroup}
           onChange={(e) => setSelectedGroup(e.target.value)}

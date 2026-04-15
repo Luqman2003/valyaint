@@ -4,6 +4,8 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { createCommentSchema } from "@/lib/validations";
 
+const authorSelect = { id: true, displayName: true, avatarUrl: true };
+
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ postId: string }> }
@@ -13,11 +15,18 @@ export async function GET(
 
   const { postId } = await params;
 
+  // Fetch top-level comments with their replies
   const comments = await prisma.comment.findMany({
-    where: { postId },
+    where: { postId, parentId: null },
     orderBy: { createdAt: "asc" },
     include: {
-      author: { select: { id: true, displayName: true, avatarUrl: true } },
+      author: { select: authorSelect },
+      replies: {
+        orderBy: { createdAt: "asc" },
+        include: {
+          author: { select: authorSelect },
+        },
+      },
     },
   });
 
@@ -53,9 +62,16 @@ export async function POST(
       content: parsed.data.content,
       authorId: session.user.id,
       postId,
+      parentId: parsed.data.parentId || null,
     },
     include: {
-      author: { select: { id: true, displayName: true, avatarUrl: true } },
+      author: { select: authorSelect },
+      replies: {
+        orderBy: { createdAt: "asc" },
+        include: {
+          author: { select: authorSelect },
+        },
+      },
     },
   });
 

@@ -11,7 +11,7 @@ struct FeedView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                // Filter
+                // Unified group filter
                 if !groups.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {

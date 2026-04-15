@@ -7,6 +7,8 @@ struct PostDetailView: View {
     @State private var comments: [Comment] = []
     @State private var newComment = ""
     @State private var submitting = false
+    @State private var replyTo: (id: String, name: String)?
+    @State private var expandedThreads: Set<String> = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,32 +18,62 @@ struct PostDetailView: View {
                         PostCardView(post: post)
                         Divider().overlay(Color(.systemGray5))
 
-                        // Comments
                         VStack(alignment: .leading, spacing: 16) {
-                            Text("Comments (\(comments.count))")
+                            let total = comments.reduce(0) { $0 + 1 + ($1.replies?.count ?? 0) }
+                            Text("Comments (\(total))")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .textCase(.uppercase)
                                 .tracking(0.5)
 
                             ForEach(comments) { comment in
-                                HStack(alignment: .top, spacing: 10) {
-                                    AvatarView(name: comment.author.displayName, avatarUrl: comment.author.avatarUrl, size: 32)
+                                VStack(alignment: .leading, spacing: 10) {
+                                    // Top-level comment
+                                    commentRow(author: comment.author, content: comment.content, date: comment.createdAt)
 
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        HStack(spacing: 6) {
-                                            Text(comment.author.displayName)
-                                                .font(.footnote.bold())
-                                            Text(timeAgo(comment.createdAt))
-                                                .font(.caption2)
-                                                .foregroundStyle(.secondary)
-                                        }
-                                        Text(comment.content)
-                                            .font(.footnote)
+                                    // Reply button
+                                    Button {
+                                        replyTo = (comment.id, comment.author.displayName)
+                                    } label: {
+                                        Text("Reply")
+                                            .font(.caption2)
                                             .foregroundStyle(.secondary)
                                     }
+                                    .padding(.leading, 42)
 
-                                    Spacer()
+                                    // Replies
+                                    let replies = comment.replies ?? []
+                                    if !replies.isEmpty {
+                                        if expandedThreads.contains(comment.id) {
+                                            VStack(alignment: .leading, spacing: 10) {
+                                                ForEach(replies) { reply in
+                                                    commentRow(author: reply.author, content: reply.content, date: reply.createdAt, small: true)
+                                                }
+                                                Button {
+                                                    expandedThreads.remove(comment.id)
+                                                } label: {
+                                                    Text("Hide replies")
+                                                        .font(.caption2)
+                                                        .foregroundStyle(.secondary)
+                                                }
+                                            }
+                                            .padding(.leading, 42)
+                                        } else {
+                                            Button {
+                                                expandedThreads.insert(comment.id)
+                                            } label: {
+                                                HStack(spacing: 6) {
+                                                    Rectangle()
+                                                        .fill(Color(.systemGray4))
+                                                        .frame(width: 20, height: 1)
+                                                    Text("View \(replies.count) repl\(replies.count == 1 ? "y" : "ies")")
+                                                        .font(.caption2)
+                                                        .foregroundStyle(.secondary)
+                                                }
+                                            }
+                                            .padding(.leading, 42)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -55,24 +87,65 @@ struct PostDetailView: View {
             }
 
             // Comment input
-            HStack(spacing: 8) {
-                TextField("Add a comment...", text: $newComment)
-                    .textFieldStyle(.roundedBorder)
-
-                Button {
-                    Task { await submitComment() }
-                } label: {
-                    Text("Post")
-                        .font(.footnote.bold())
+            VStack(spacing: 6) {
+                if let replyTo {
+                    HStack {
+                        Text("Replying to \(replyTo.name)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button {
+                            self.replyTo = nil
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 12)
                 }
-                .disabled(submitting || newComment.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                HStack(spacing: 8) {
+                    TextField(replyTo != nil ? "Reply to \(replyTo!.name)..." : "Add a comment...", text: $newComment)
+                        .textFieldStyle(.roundedBorder)
+
+                    Button {
+                        Task { await submitComment() }
+                    } label: {
+                        Text("Post")
+                            .font(.footnote.bold())
+                    }
+                    .disabled(submitting || newComment.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
             }
-            .padding(12)
             .background(.ultraThinMaterial)
         }
         .navigationTitle("Post")
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadPost() }
+    }
+
+    private func commentRow(author: User, content: String, date: String, small: Bool = false) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            AvatarView(name: author.displayName, avatarUrl: author.avatarUrl, size: small ? 24 : 32)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(author.displayName)
+                        .font(small ? .caption.bold() : .footnote.bold())
+                    Text(timeAgo(date))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Text(content)
+                    .font(small ? .caption : .footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+        }
     }
 
     private func loadPost() async {
@@ -87,10 +160,28 @@ struct PostDetailView: View {
         guard !trimmed.isEmpty else { return }
 
         submitting = true
+        var body: [String: String] = ["content": trimmed]
+        if let replyTo { body["parentId"] = replyTo.id }
+
         do {
-            let comment: Comment = try await APIClient.shared.post("/api/posts/\(postId)/comments", body: ["content": trimmed])
-            comments.append(comment)
+            let comment: Comment = try await APIClient.shared.post("/api/posts/\(postId)/comments", body: body)
+            if let replyTo {
+                // Add reply to parent
+                if let idx = comments.firstIndex(where: { $0.id == replyTo.id }) {
+                    var updated = comments[idx]
+                    let newReply = Comment.Reply(id: comment.id, content: comment.content, createdAt: comment.createdAt, author: comment.author)
+                    var replies = updated.replies ?? []
+                    replies.append(newReply)
+                    // Recreate comment with updated replies
+                    updated = Comment(id: updated.id, content: updated.content, createdAt: updated.createdAt, author: updated.author, replies: replies)
+                    comments[idx] = updated
+                    expandedThreads.insert(replyTo.id)
+                }
+            } else {
+                comments.append(comment)
+            }
             newComment = ""
+            self.replyTo = nil
         } catch {}
         submitting = false
     }

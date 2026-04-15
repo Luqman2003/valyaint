@@ -61,6 +61,14 @@ struct Comment: Codable, Identifiable {
     let content: String
     let createdAt: String
     let author: User
+    let replies: [Reply]?
+
+    struct Reply: Codable, Identifiable {
+        let id: String
+        let content: String
+        let createdAt: String
+        let author: User
+    }
 }
 
 struct FeedResponse: Codable {

@@ -22,14 +22,14 @@ interface Post {
 export default function FeedPage() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
-  const [filter, setFilter] = useState("");
+  const [selectedGroup, setSelectedGroup] = useState("");
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchPosts = useCallback(async (cursor?: string) => {
     const params = new URLSearchParams();
     if (cursor) params.set("cursor", cursor);
-    if (filter) params.set("groupId", filter);
+    if (selectedGroup) params.set("groupId", selectedGroup);
 
     const res = await fetch(`/api/feed?${params}`);
     const data = await res.json();
@@ -41,7 +41,7 @@ export default function FeedPage() {
     }
     setNextCursor(data.nextCursor);
     setLoading(false);
-  }, [filter]);
+  }, [selectedGroup]);
 
   useEffect(() => {
     fetch("/api/groups").then((r) => r.json()).then(setGroups);
@@ -54,12 +54,11 @@ export default function FeedPage() {
 
   return (
     <div>
-      <PostForm groups={groups} onPost={() => fetchPosts()} />
-
+      {/* Unified group selector — filters feed + sets post target */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-zinc-800">
         <select
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
+          value={selectedGroup}
+          onChange={(e) => setSelectedGroup(e.target.value)}
           className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm text-white ring-1 ring-zinc-800"
         >
           <option value="">All groups</option>
@@ -68,6 +67,13 @@ export default function FeedPage() {
           ))}
         </select>
       </div>
+
+      <PostForm
+        groupId={selectedGroup || undefined}
+        groups={groups}
+        hideGroupSelector
+        onPost={() => fetchPosts()}
+      />
 
       {loading ? (
         <p className="p-8 text-center text-zinc-500">Loading...</p>

@@ -9,10 +9,15 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const filter = searchParams.get("filter"); // "photos" | "text" | null (all)
+  const groupId = searchParams.get("groupId");
   const cursor = searchParams.get("cursor");
   const limit = 20;
 
   const where: Record<string, unknown> = { authorId: session.user.id };
+
+  if (groupId) {
+    where.groupId = groupId;
+  }
 
   if (filter === "photos") {
     where.photos = { some: {} };

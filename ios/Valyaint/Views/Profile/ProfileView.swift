@@ -6,6 +6,8 @@ struct ProfileView: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var uploading = false
     @State private var filter: PostFilter = .photos
+    @State private var groups: [Group] = []
+    @State private var selectedGroupId = ""
     @State private var posts: [Post] = []
     @State private var loading = true
 
@@ -46,7 +48,25 @@ struct ProfileView: View {
                 }
                 .padding(.vertical, 20)
 
-                // Filter toggle
+                // Group filter
+                if !groups.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            groupChip("All", isSelected: selectedGroupId.isEmpty) {
+                                selectedGroupId = ""
+                            }
+                            ForEach(groups) { group in
+                                groupChip(group.name, isSelected: selectedGroupId == group.id) {
+                                    selectedGroupId = group.id
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                    }
+                }
+
+                // Type filter
                 HStack(spacing: 0) {
                     ForEach(PostFilter.allCases, id: \.self) { tab in
                         Button {
@@ -103,7 +123,26 @@ struct ProfileView: View {
         .onChange(of: filter) {
             Task { await loadPosts() }
         }
-        .task { await loadPosts() }
+        .onChange(of: selectedGroupId) {
+            Task { await loadPosts() }
+        }
+        .task {
+            groups = (try? await APIClient.shared.get("/api/groups") as [Group]) ?? []
+            await loadPosts()
+        }
+    }
+
+    private func groupChip(_ label: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.caption)
+                .fontWeight(isSelected ? .semibold : .regular)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(isSelected ? .white : Color(.systemGray5))
+                .foregroundStyle(isSelected ? .black : .white)
+                .clipShape(Capsule())
+        }
     }
 
     private var photoGrid: some View {
@@ -169,10 +208,12 @@ struct ProfileView: View {
 
     private func loadPosts() async {
         loading = true
+        var query: [String: String] = ["filter": filter.rawValue]
+        if !selectedGroupId.isEmpty { query["groupId"] = selectedGroupId }
         do {
             let response: FeedResponse = try await APIClient.shared.get(
                 "/api/users/me/posts",
-                query: ["filter": filter.rawValue]
+                query: query
             )
             posts = response.posts
         } catch {

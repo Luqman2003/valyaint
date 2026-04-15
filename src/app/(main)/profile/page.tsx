@@ -19,18 +19,27 @@ export default function ProfilePage() {
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [filter, setFilter] = useState<"photos" | "text">("photos");
+  const [groups, setGroups] = useState<{ id: string; name: string }[]>([]);
+  const [selectedGroup, setSelectedGroup] = useState("");
   const [posts, setPosts] = useState<PostItem[]>([]);
   const [loading, setLoading] = useState(true);
 
+  useEffect(() => {
+    fetch("/api/groups").then((r) => r.json()).then(setGroups);
+  }, []);
+
   const loadPosts = useCallback(async () => {
     setLoading(true);
-    const res = await fetch(`/api/users/me/posts?filter=${filter}`);
+    setPosts([]);
+    const params = new URLSearchParams({ filter });
+    if (selectedGroup) params.set("groupId", selectedGroup);
+    const res = await fetch(`/api/users/me/posts?${params}`);
     if (res.ok) {
       const data = await res.json();
       setPosts(data.posts);
     }
     setLoading(false);
-  }, [filter]);
+  }, [filter, selectedGroup]);
 
   useEffect(() => {
     loadPosts();
@@ -40,13 +49,27 @@ export default function ProfilePage() {
 
   const avatar = session.user.image;
 
+  async function ensureJpeg(file: File): Promise<File> {
+    if (file.type === "image/jpeg" || file.type === "image/png") return file;
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext("2d")!.drawImage(bitmap, 0, 0);
+    const blob = await new Promise<Blob>((resolve) =>
+      canvas.toBlob((b) => resolve(b!), "image/jpeg", 1.0)
+    );
+    return new File([blob], file.name.replace(/\.[^.]+$/, ".jpg"), { type: "image/jpeg" });
+  }
+
   async function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const rawFile = e.target.files?.[0];
+    if (!rawFile) return;
 
     setUploading(true);
 
     try {
+      const file = await ensureJpeg(rawFile);
       const presignRes = await fetch("/api/upload/presign", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -114,7 +137,36 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      {/* Filter toggle */}
+      {/* Group filter */}
+      {groups.length > 0 && (
+        <div className="flex gap-2 px-4 overflow-x-auto no-scrollbar">
+          <button
+            onClick={() => setSelectedGroup("")}
+            className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-medium transition ${
+              selectedGroup === ""
+                ? "bg-white text-black"
+                : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+            }`}
+          >
+            All
+          </button>
+          {groups.map((g) => (
+            <button
+              key={g.id}
+              onClick={() => setSelectedGroup(g.id)}
+              className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-medium transition ${
+                selectedGroup === g.id
+                  ? "bg-white text-black"
+                  : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+              }`}
+            >
+              {g.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Type filter */}
       <div className="flex border-b border-zinc-800">
         <button
           onClick={() => setFilter("photos")}
@@ -149,7 +201,7 @@ export default function ProfilePage() {
         </p>
       ) : filter === "photos" ? (
         <div className="grid grid-cols-3 gap-0.5">
-          {posts.map((post) => (
+          {posts.filter((p) => p.photos.length > 0).map((post) => (
             <Link key={post.id} href={`/posts/${post.id}`}>
               <div className="relative aspect-square bg-zinc-800">
                 <Image
